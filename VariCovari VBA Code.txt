@@ -1,0 +1,31 @@
+#VariCovari VBA Code#
+Option Explicit
+
+Public Function VariCovari(ByVal rng As Range) As Variant
+    Dim i As Long, j As Long
+    Dim numCols As Long
+    Dim matrix() As Double
+    
+    If rng Is Nothing Then
+        VariCovari = CVErr(xlErrRef)
+        Exit Function
+    End If
+    
+    numCols = rng.Columns.Count
+    If numCols < 1 Then
+        VariCovari = CVErr(xlErrValue)
+        Exit Function
+    End If
+    
+    ReDim matrix(1 To numCols, 1 To numCols)
+    
+    For i = 1 To numCols
+        For j = 1 To numCols
+            matrix(i, j) = Application.WorksheetFunction.Covariance_S( _
+                rng.Columns(i), rng.Columns(j) _
+            )
+        Next j
+    Next i
+    
+    VariCovari = matrix
+End Function

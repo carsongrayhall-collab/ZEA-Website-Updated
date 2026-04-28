@@ -1,0 +1,40 @@
+#SIM VBA Code#
+Option Explicit
+
+Public Function sim(ByVal assetData As Range, ByVal marketData As Range) As Variant
+    Dim i As Long, j As Long
+    Dim numCols As Long
+    Dim matrix() As Double
+    Dim betaI As Double, betaJ As Double
+    Dim marketVar As Double
+    
+    If assetData Is Nothing Or marketData Is Nothing Then
+        sim = CVErr(xlErrRef)
+        Exit Function
+    End If
+    
+    numCols = assetData.Columns.Count
+    If numCols < 1 Then
+        sim = CVErr(xlErrValue)
+        Exit Function
+    End If
+    
+    ReDim matrix(1 To numCols, 1 To numCols)
+    
+    marketVar = Application.WorksheetFunction.Var_S(marketData)
+    
+    For i = 1 To numCols
+        For j = 1 To numCols
+            If i = j Then
+                matrix(i, j) = Application.WorksheetFunction.Var_S(assetData.Columns(i))
+            Else
+                betaI = Application.WorksheetFunction.Slope(assetData.Columns(i), marketData)
+                betaJ = Application.WorksheetFunction.Slope(assetData.Columns(j), marketData)
+                
+                matrix(i, j) = betaI * betaJ * marketVar
+            End If
+        Next j
+    Next i
+    
+    sim = matrix
+End Function

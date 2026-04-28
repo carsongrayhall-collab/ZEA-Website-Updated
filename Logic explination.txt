@@ -1,0 +1,4 @@
+The logical path goes as follows: The stock price data table is analyzed into a monthly price change as a percent table. This table is then used to construct a variance covariance matrix using the formula (VariCovari - VBA code attached). This Variance covariance matrix is then turned into the proper GMVP by the following formula:
+
+=MMULT(B3:G8,unitcolvector(6))/SUM(MMULT(B3:G8,unitcolvector(6)))
+

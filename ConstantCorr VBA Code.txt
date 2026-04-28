@@ -1,0 +1,35 @@
+#ConstantCorr VBA Code#
+
+Option Explicit
+
+Public Function ConstantCorr(ByVal data As Range, ByVal corr As Double) As Variant
+    Dim i As Long, j As Long
+    Dim numCols As Long
+    Dim matrix() As Double
+    Dim sd() As Double
+    
+    numCols = data.Columns.Count
+    ReDim matrix(1 To numCols, 1 To numCols)
+    ReDim sd(1 To numCols)
+    
+    If Abs(corr) >= 1 Then
+        ConstantCorr = VBAProject.Module3.VariCovari(data)
+        Exit Function
+    End If
+    
+    For i = 1 To numCols
+        sd(i) = Application.WorksheetFunction.StDev_S(data.Columns(i))
+    Next i
+    
+    For i = 1 To numCols
+        For j = 1 To numCols
+            If i = j Then
+                matrix(i, j) = sd(i) ^ 2
+            Else
+                matrix(i, j) = corr * sd(i) * sd(j)
+            End If
+        Next j
+    Next i
+    
+    ConstantCorr = matrix
+End Function

@@ -1,0 +1,17 @@
+.next/
+node_modules/
+.vercel/
+.codex-dev.err
+.codex-dev.log
+.codex-homepage-check*.png
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.vercel
