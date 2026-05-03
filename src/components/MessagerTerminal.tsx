@@ -111,7 +111,11 @@ export function MessagerTerminal() {
 
   const sendSelected = async () => {
     setIsSending(true);
-    appendLog(`Sending ${selectedRecipients.length} message(s).`);
+    appendLog(
+      `Sending ${selectedRecipients.length} message(s)${
+        selectedRecipients.length > 1 && delaySeconds > 0 ? ` with ${delaySeconds}s between each send` : ""
+      }.`
+    );
     try {
       const response = await fetch("/api/messager-bot-cloud/send", {
         method: "POST",
@@ -195,6 +199,9 @@ export function MessagerTerminal() {
               onChange={(event) => setDelaySeconds(Number(event.target.value || 0))}
               className="field-base"
             />
+            <span className="mt-2 block text-xs leading-5 text-mutedTone">
+              Applied after each message before the next selected recipient is sent.
+            </span>
           </label>
           <label className="block text-sm text-text">
             <span className="mb-2 block">Spreadsheet</span>

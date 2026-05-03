@@ -53,16 +53,13 @@ export async function POST(request: Request) {
     const replyTo = payload.replyTo || process.env.MESSAGER_REPLY_TO || "carson.hall@zeabroker.com";
     const unsubscribeUrl = payload.unsubscribeUrl || "https://www.zeabroker.com/unsubscribe";
     const delaySeconds = Math.max(0, Math.min(20, Number(payload.delaySeconds ?? 0) || 0));
+    const delayBetweenSendsMs = delaySeconds * 1000;
     const resend = new Resend(process.env.RESEND_API_KEY);
     const headerStore = await headers();
     const ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
     const results = [];
     for (const [index, recipient] of recipients.entries()) {
-      if (index > 0 && delaySeconds > 0) {
-        await wait(delaySeconds * 1000);
-      }
-
       const result = await resend.emails.send({
         from,
         to: recipient.email,
@@ -84,6 +81,11 @@ export async function POST(request: Request) {
         id: result.data?.id ?? null,
         error: result.error?.message ?? null
       });
+
+      const hasNextRecipient = index < recipients.length - 1;
+      if (hasNextRecipient && delayBetweenSendsMs > 0) {
+        await wait(delayBetweenSendsMs);
+      }
     }
 
     return NextResponse.json({ results });
