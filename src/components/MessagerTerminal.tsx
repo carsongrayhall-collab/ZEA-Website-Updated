@@ -39,9 +39,10 @@ function previewHtml(message: string) {
 
 export function MessagerTerminal() {
   const [pin, setPin] = useState("");
-  const [fromEmail, setFromEmail] = useState("ZEA Brokers <contact@zeabroker.com>");
-  const [replyTo, setReplyTo] = useState("contact@zeabroker.com");
+  const [fromEmail, setFromEmail] = useState("Carson Hall <carson.hall@zeabroker.com>");
+  const [replyTo, setReplyTo] = useState("carson.hall@zeabroker.com");
   const [unsubscribeUrl, setUnsubscribeUrl] = useState("https://www.zeabroker.com/unsubscribe");
+  const [delaySeconds, setDelaySeconds] = useState(5);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -120,6 +121,7 @@ export function MessagerTerminal() {
           fromEmail,
           replyTo,
           unsubscribeUrl,
+          delaySeconds,
           recipients: selectedRecipients
         })
       });
@@ -180,6 +182,17 @@ export function MessagerTerminal() {
             <input
               value={unsubscribeUrl}
               onChange={(event) => setUnsubscribeUrl(event.target.value)}
+              className="field-base"
+            />
+          </label>
+          <label className="block text-sm text-text">
+            <span className="mb-2 block">Cooldown Between Sends, Seconds</span>
+            <input
+              value={delaySeconds}
+              min={0}
+              max={20}
+              type="number"
+              onChange={(event) => setDelaySeconds(Number(event.target.value || 0))}
               className="field-base"
             />
           </label>
