@@ -168,7 +168,7 @@ export function PortfolioOptimizer() {
           <label className="block text-sm text-text">
             <span className="mb-2 block font-medium">Stock symbols</span>
             <input name="symbols" className="field-base" defaultValue="SPY, QQQ, IWM" placeholder="SPY, QQQ, IWM" required />
-            <span className="mt-1.5 block text-xs leading-5 text-mutedTone">Enter 2–8 US-listed symbols with at least eight years of history.</span>
+            <span className="mt-1.5 block text-xs leading-5 text-mutedTone">Enter 2–8 established US-listed symbols, separated by commas.</span>
           </label>
           <label className="block text-sm text-text">
             <span className="mb-2 block font-medium">Investment amount</span>

@@ -179,7 +179,7 @@ export async function POST(request: Request) {
   const { symbols, investment } = parsed.data;
   const requestedSymbols = [...new Set([...symbols, "SPY"])];
   const start = new Date();
-  start.setUTCFullYear(start.getUTCFullYear() - 8);
+  start.setUTCFullYear(start.getUTCFullYear() - 9);
 
   try {
     const bars = await fetchBars(requestedSymbols, start.toISOString(), apiKey, apiSecret);
