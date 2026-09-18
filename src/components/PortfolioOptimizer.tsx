@@ -218,7 +218,7 @@ export function PortfolioOptimizer() {
             <p className="mt-5 text-center text-xs leading-5 text-mutedTone">
               {panel === 0
                 ? `36 monthly observations through ${new Date(`${result.asOf}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC" })}.`
-                : `${result.observations} monthly returns, rebalanced monthly from ${result.backtestStart} through ${result.backtestEnd}.`}
+                : `${result.observations} monthly returns using current GMVP weights; 1/N is rebalanced monthly.`}
             </p>
           ) : null}
         </div>

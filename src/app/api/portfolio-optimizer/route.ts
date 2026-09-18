@@ -199,7 +199,7 @@ export async function POST(request: Request) {
     backtestStart.setUTCFullYear(backtestStart.getUTCFullYear() - 5);
     const startIndex = monthEnds.findIndex((point) => point.date >= backtestStart.toISOString().slice(0, 10));
 
-    if (startIndex < 37 || monthEnds.length - startIndex < 48) {
+    if (startIndex < 1 || monthEnds.length - startIndex < 48) {
       return Response.json({ error: "The selected symbols do not share enough monthly history for this backtest." }, { status: 422 });
     }
 
@@ -227,10 +227,8 @@ export async function POST(request: Request) {
     let equalValue = investment;
 
     for (let i = startIndex; i < monthEnds.length; i += 1) {
-      const trainingReturns = logReturns(monthEnds.slice(i - 37, i));
-      const weights = workbookMvpWeights(covarianceMatrix(trainingReturns));
       const assetReturns = monthEnds[i].prices.map((price, column) => price / monthEnds[i - 1].prices[column] - 1);
-      const gmvpReturn = weights.reduce((total, weight, column) => total + weight * assetReturns[column], 0);
+      const gmvpReturn = latestWeights.reduce((total, weight, column) => total + weight * assetReturns[column], 0);
       const equalReturn = assetReturns.reduce((total, value) => total + value, 0) / assetReturns.length;
       const spyReturn = monthEnds[i].spy / monthEnds[i - 1].spy - 1;
 
