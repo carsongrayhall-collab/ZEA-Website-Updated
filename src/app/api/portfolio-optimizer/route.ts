@@ -260,7 +260,7 @@ export async function POST(request: Request) {
     backtestStart.setUTCFullYear(backtestStart.getUTCFullYear() - 5);
     const startIndex = monthEnds.findIndex((point) => point.date >= backtestStart.toISOString().slice(0, 10));
 
-    if (startIndex < 13 || monthEnds.length - startIndex < 48) {
+    if (startIndex < 3 || monthEnds.length - startIndex < 48) {
       return Response.json({ error: "The selected symbols do not share enough monthly history for this backtest." }, { status: 422 });
     }
 
