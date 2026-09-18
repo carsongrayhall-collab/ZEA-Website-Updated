@@ -4,6 +4,7 @@ import { SectionTitle } from "@/components/SectionTitle";
 import { ContentSlider } from "@/components/ContentSlider";
 import { ContactForm } from "@/components/ContactForm";
 import { Footer } from "@/components/Footer";
+import { PortfolioOptimizer } from "@/components/PortfolioOptimizer";
 import {
   whatIDoSlides,
   whoIAmCopy,
@@ -97,6 +98,7 @@ export default function HomePage() {
               ))}
             </div>
           </section>
+          <PortfolioOptimizer />
           <ContactForm />
         </div>
       </div>
