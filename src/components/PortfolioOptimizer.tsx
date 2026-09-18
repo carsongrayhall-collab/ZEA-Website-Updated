@@ -56,7 +56,7 @@ function AllocationChart({ result }: { result: Result }) {
         ))}
         <div className="pt-1 text-xs leading-5 text-mutedTone">
           <span className="mr-4">σ {(result.portfolioRisk.sigma * 100).toFixed(1)}%</span>
-          <span>σ² {(result.portfolioRisk.variance * 100).toFixed(2)}%</span>
+          <span>σ² {result.portfolioRisk.variance.toFixed(4)}</span>
         </div>
       </div>
     </div>
@@ -114,7 +114,7 @@ function LineChart({ result }: { result: Result }) {
           <div key={label}>
             <p className="font-serif text-lg text-text">{label}</p>
             <p className="text-xs leading-5 text-mutedTone">σ {(risk.sigma * 100).toFixed(1)}%</p>
-            <p className="text-xs leading-5 text-mutedTone">σ² {(risk.variance * 100).toFixed(2)}%</p>
+            <p className="text-xs leading-5 text-mutedTone">σ² {risk.variance.toFixed(4)}</p>
           </div>
         ))}
       </div>
