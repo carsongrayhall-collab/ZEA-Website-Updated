@@ -16,7 +16,7 @@ const requestSchema = z.object({
       message: "Use valid ticker symbols separated by commas."
     }),
   investment: z.coerce.number().min(100).max(10_000_000),
-  method: z.literal("gmvp")
+  method: z.enum(["long_only", "long_short"])
 });
 
 type Bar = { c: number; t: string };
@@ -56,26 +56,72 @@ function projectToSimplex(values: number[]) {
 
 function longOnlyMinimumVariance(covariance: number[][]) {
   let weights = covariance.map(() => 1 / covariance.length);
-  for (let iteration = 0; iteration < 900; iteration += 1) {
+  const lipschitzBound = 2 * Math.max(
+    ...covariance.map((row) => row.reduce((total, value) => total + Math.abs(value), 0))
+  );
+  const step = lipschitzBound > 0 ? 1 / lipschitzBound : 1;
+
+  for (let iteration = 0; iteration < 5_000; iteration += 1) {
     const gradient = covariance.map((row) =>
       2 * row.reduce((total, value, j) => total + value * weights[j], 0)
     );
-    const step = 0.2 / Math.sqrt(iteration + 1);
-    weights = projectToSimplex(weights.map((weight, i) => weight - step * gradient[i]));
+    const next = projectToSimplex(weights.map((weight, i) => weight - step * gradient[i]));
+    const change = Math.max(...next.map((weight, i) => Math.abs(weight - weights[i])));
+    weights = next;
+    if (change < 1e-12) break;
   }
   return weights;
 }
 
-function workbookMvpWeights(covariance: number[][]) {
-  const rowTotals = covariance.map((row) => row.reduce((total, value) => total + value, 0));
-  const grandTotal = rowTotals.reduce((total, value) => total + value, 0);
-  const weights = rowTotals.map((value) => value / grandTotal);
+function solveLinearSystem(matrix: number[][], target: number[]) {
+  const augmented = matrix.map((row, i) => [...row, target[i]]);
 
-  // Use the workbook formula whenever it produces pie-compatible allocations.
-  // A long-only variance minimizer protects the UI when unusual assets create negative slices.
-  return Number.isFinite(grandTotal) && Math.abs(grandTotal) > 1e-12 && weights.every((weight) => weight >= 0)
-    ? weights
-    : longOnlyMinimumVariance(covariance);
+  for (let column = 0; column < matrix.length; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < matrix.length; row += 1) {
+      if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) pivot = row;
+    }
+    if (Math.abs(augmented[pivot][column]) < 1e-14) return null;
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+
+    const divisor = augmented[column][column];
+    for (let j = column; j <= matrix.length; j += 1) augmented[column][j] /= divisor;
+    for (let row = 0; row < matrix.length; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row][column];
+      for (let j = column; j <= matrix.length; j += 1) {
+        augmented[row][j] -= factor * augmented[column][j];
+      }
+    }
+  }
+
+  return augmented.map((row) => row[matrix.length]);
+}
+
+function globalMinimumVarianceWeights(covariance: number[][], allowShort: boolean) {
+  const averageVariance = covariance.reduce((total, row, i) => total + row[i], 0) / covariance.length;
+  const ridge = Math.max(averageVariance * 1e-10, 1e-14);
+  const regularized = covariance.map((row, i) => row.map((value, j) => value + (i === j ? ridge : 0)));
+  const inverseTimesOne = solveLinearSystem(regularized, covariance.map(() => 1));
+  const denominator = inverseTimesOne?.reduce((total, value) => total + value, 0) ?? 0;
+  const unconstrained = inverseTimesOne?.map((value) => value / denominator);
+
+  // The unconstrained GMVP has the closed form Σ⁻¹1/(1′Σ⁻¹1).
+  if (
+    unconstrained &&
+    Number.isFinite(denominator) &&
+    Math.abs(denominator) > 1e-12 &&
+    unconstrained.every((weight) => Number.isFinite(weight))
+  ) {
+    if (allowShort) return unconstrained;
+    if (unconstrained.every((weight) => weight >= -1e-10)) {
+      const clipped = unconstrained.map((weight) => Math.max(weight, 0));
+      const total = clipped.reduce((sum, weight) => sum + weight, 0);
+      return clipped.map((weight) => weight / total);
+    }
+  }
+  if (allowShort) throw new Error("OPTIMIZATION");
+  return longOnlyMinimumVariance(covariance);
 }
 
 function portfolioVariance(weights: number[], covariance: number[][]) {
@@ -84,6 +130,20 @@ function portfolioVariance(weights: number[], covariance: number[][]) {
       total + weight * weights.reduce((rowTotal, otherWeight, j) => rowTotal + otherWeight * covariance[i][j], 0),
     0
   );
+}
+
+function validateMinimumVariance(weights: number[], covariance: number[][], allowShort: boolean) {
+  const sum = weights.reduce((total, weight) => total + weight, 0);
+  const equalWeights = weights.map(() => 1 / weights.length);
+  const optimizedVariance = portfolioVariance(weights, covariance);
+  const equalVariance = portfolioVariance(equalWeights, covariance);
+  const tolerance = Math.max(1e-12, Math.abs(equalVariance) * 1e-7);
+  const valid =
+    weights.every((weight) => Number.isFinite(weight) && (allowShort || weight >= -1e-10)) &&
+    Math.abs(sum - 1) < 1e-8 &&
+    optimizedVariance <= equalVariance + tolerance;
+  if (!valid) throw new Error("OPTIMIZATION");
+  return { sum, optimizedVariance, equalVariance };
 }
 
 function logReturns(points: MonthEnd[]) {
@@ -176,7 +236,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const { symbols, investment } = parsed.data;
+  const { symbols, investment, method } = parsed.data;
+  const allowShort = method === "long_short";
   const requestedSymbols = [...new Set([...symbols, "SPY"])];
   const start = new Date();
   start.setUTCFullYear(start.getUTCFullYear() - 9);
@@ -199,13 +260,14 @@ export async function POST(request: Request) {
     backtestStart.setUTCFullYear(backtestStart.getUTCFullYear() - 5);
     const startIndex = monthEnds.findIndex((point) => point.date >= backtestStart.toISOString().slice(0, 10));
 
-    if (startIndex < 1 || monthEnds.length - startIndex < 48) {
+    if (startIndex < 13 || monthEnds.length - startIndex < 48) {
       return Response.json({ error: "The selected symbols do not share enough monthly history for this backtest." }, { status: 422 });
     }
 
     const latestWindow = monthEnds.slice(-37);
     const latestCovariance = covarianceMatrix(logReturns(latestWindow));
-    const latestWeights = workbookMvpWeights(latestCovariance);
+    const latestWeights = globalMinimumVarianceWeights(latestCovariance, allowShort);
+    const latestSanity = validateMinimumVariance(latestWeights, latestCovariance, allowShort);
     const latestPrices = monthEnds.at(-1)?.prices ?? [];
     const latestVariance = portfolioVariance(latestWeights, latestCovariance) * 12;
 
@@ -228,7 +290,13 @@ export async function POST(request: Request) {
 
     for (let i = startIndex; i < monthEnds.length; i += 1) {
       const assetReturns = monthEnds[i].prices.map((price, column) => price / monthEnds[i - 1].prices[column] - 1);
-      const gmvpReturn = latestWeights.reduce((total, weight, column) => total + weight * assetReturns[column], 0);
+      // Estimate from information available before this month, then rebalance.
+      // 37 month-end prices produce at most 36 trailing monthly returns.
+      const trainingPoints = monthEnds.slice(Math.max(0, i - 37), i);
+      const rollingCovariance = covarianceMatrix(logReturns(trainingPoints));
+      const rollingWeights = globalMinimumVarianceWeights(rollingCovariance, allowShort);
+      validateMinimumVariance(rollingWeights, rollingCovariance, allowShort);
+      const gmvpReturn = rollingWeights.reduce((total, weight, column) => total + weight * assetReturns[column], 0);
       const equalReturn = assetReturns.reduce((total, value) => total + value, 0) / assetReturns.length;
       const spyReturn = monthEnds[i].spy / monthEnds[i - 1].spy - 1;
 
@@ -243,12 +311,23 @@ export async function POST(request: Request) {
 
     return Response.json({
       allocations,
+      method,
+      grossExposure: latestWeights.reduce((total, weight) => total + Math.abs(weight), 0),
       portfolioRisk: { sigma: Math.sqrt(Math.max(latestVariance, 0)), variance: latestVariance },
       series,
       riskComparison: {
         gmvp: annualizedRisk(realized.gmvp),
         spy: annualizedRisk(realized.spy),
         equal: annualizedRisk(realized.equal)
+      },
+      sanityChecks: {
+        weightsSum: latestSanity.sum,
+        nonNegativeWeights: latestWeights.every((weight) => weight >= 0),
+        estimatedAnnualVariance: latestSanity.optimizedVariance * 12,
+        equalWeightEstimatedAnnualVariance: latestSanity.equalVariance * 12,
+        minimizesAgainstEqualWeight: latestSanity.optimizedVariance <= latestSanity.equalVariance + 1e-12,
+        sigmaSquaredIdentity: Math.abs(latestVariance - Math.sqrt(Math.max(latestVariance, 0)) ** 2) < 1e-12,
+        rebalanceFrequency: "monthly"
       },
       observations: series.length - 1,
       backtestStart: series[0].date,
@@ -258,7 +337,9 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error && error.message === "AUTH"
       ? "The Alpaca credentials were rejected."
-      : "Alpaca market data is temporarily unavailable.";
-    return Response.json({ error: message }, { status: 502 });
+      : error instanceof Error && error.message === "OPTIMIZATION"
+        ? "The optimizer failed a variance sanity check. Please try a different symbol set."
+        : "Alpaca market data is temporarily unavailable.";
+    return Response.json({ error: message }, { status: error instanceof Error && error.message === "OPTIMIZATION" ? 500 : 502 });
   }
 }

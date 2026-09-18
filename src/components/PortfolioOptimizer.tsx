@@ -9,6 +9,8 @@ type Result = {
   portfolioRisk: Risk;
   series: Array<{ date: string; gmvp: number; spy: number; equal: number }>;
   riskComparison: { gmvp: Risk; spy: Risk; equal: Risk };
+  method: "long_only" | "long_short";
+  grossExposure: number;
   observations: number;
   backtestStart: string;
   backtestEnd: string;
@@ -27,9 +29,10 @@ function Arrow({ direction }: { direction: "left" | "right" }) {
 
 function AllocationChart({ result }: { result: Result }) {
   let total = 0;
+  const exposureTotal = result.allocations.reduce((sum, allocation) => sum + Math.abs(allocation.weight), 0);
   const stops = result.allocations.flatMap((allocation) => {
     const start = total;
-    total += allocation.weight * 100;
+    total += Math.abs(allocation.weight) / exposureTotal * 100;
     return [`${allocation.color} ${start}%`, `${allocation.color} ${total}%`];
   });
 
@@ -39,7 +42,7 @@ function AllocationChart({ result }: { result: Result }) {
         className="mx-auto aspect-square w-full max-w-[230px] rounded-full border border-[rgba(110,31,27,0.16)] shadow-card"
         style={{ background: `conic-gradient(${stops.join(",")})` }}
         role="img"
-        aria-label={result.allocations.map((item) => `${item.symbol} ${(item.weight * 100).toFixed(1)} percent`).join(", ")}
+        aria-label={result.allocations.map((item) => `${item.symbol} ${(item.weight * 100).toFixed(1)} percent signed weight`).join(", ")}
       />
       <div className="space-y-3">
         {result.allocations.map((allocation) => (
@@ -57,7 +60,11 @@ function AllocationChart({ result }: { result: Result }) {
         <div className="pt-1 text-xs leading-5 text-mutedTone">
           <span className="mr-4">σ {(result.portfolioRisk.sigma * 100).toFixed(1)}%</span>
           <span>σ² {result.portfolioRisk.variance.toFixed(4)}</span>
+          {result.method === "long_short" ? <span className="ml-4">Gross {(result.grossExposure * 100).toFixed(1)}%</span> : null}
         </div>
+        {result.method === "long_short" ? (
+          <p className="text-[0.65rem] leading-4 text-mutedTone">Slice size represents absolute exposure; labels show signed long/short weights.</p>
+        ) : null}
       </div>
     </div>
   );
@@ -71,7 +78,7 @@ function LineChart({ result }: { result: Result }) {
   const low = Math.min(...values);
   const high = Math.max(...values);
   const padding = Math.max((high - low) * 0.12, high * 0.04);
-  const min = Math.max(0, low - padding);
+  const min = result.method === "long_short" ? low - padding : Math.max(0, low - padding);
   const max = high + padding;
   const x = (index: number) => plot.left + index * (width - plot.left - plot.right) / Math.max(result.series.length - 1, 1);
   const y = (value: number) => plot.top + (max - value) * (height - plot.top - plot.bottom) / Math.max(max - min, 1);
@@ -179,8 +186,9 @@ export function PortfolioOptimizer() {
           </label>
           <label className="block text-sm text-text">
             <span className="mb-2 block font-medium">Portfolio method</span>
-            <select name="method" className="field-base" defaultValue="gmvp">
-              <option value="gmvp">Global Minimum Variance Portfolio</option>
+            <select name="method" className="field-base" defaultValue="long_only">
+              <option value="long_only">Long-Only GMVP</option>
+              <option value="long_short">Long/Short Allowed GMVP</option>
             </select>
           </label>
           <button type="submit" disabled={pending} className="w-full border border-burgundy bg-burgundy px-5 py-3 font-serif text-lg text-white transition hover:bg-[#7f0e12] disabled:cursor-wait disabled:opacity-60">
@@ -218,7 +226,7 @@ export function PortfolioOptimizer() {
             <p className="mt-5 text-center text-xs leading-5 text-mutedTone">
               {panel === 0
                 ? `36 monthly observations through ${new Date(`${result.asOf}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC" })}.`
-                : `${result.observations} monthly returns using current GMVP weights; 1/N is rebalanced monthly.`}
+                : `${result.observations} monthly returns; GMVP and 1/N are both rebalanced monthly.`}
             </p>
           ) : null}
         </div>
