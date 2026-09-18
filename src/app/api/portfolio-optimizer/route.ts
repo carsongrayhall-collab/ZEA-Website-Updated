@@ -260,7 +260,7 @@ export async function POST(request: Request) {
     backtestStart.setUTCFullYear(backtestStart.getUTCFullYear() - 5);
     const startIndex = monthEnds.findIndex((point) => point.date >= backtestStart.toISOString().slice(0, 10));
 
-    if (startIndex < 3 || monthEnds.length - startIndex < 48) {
+    if (startIndex < 1 || monthEnds.length - startIndex < 48) {
       return Response.json({ error: "The selected symbols do not share enough monthly history for this backtest." }, { status: 422 });
     }
 
@@ -293,9 +293,13 @@ export async function POST(request: Request) {
       // Estimate from information available before this month, then rebalance.
       // 37 month-end prices produce at most 36 trailing monthly returns.
       const trainingPoints = monthEnds.slice(Math.max(0, i - 37), i);
-      const rollingCovariance = covarianceMatrix(logReturns(trainingPoints));
-      const rollingWeights = globalMinimumVarianceWeights(rollingCovariance, allowShort);
-      validateMinimumVariance(rollingWeights, rollingCovariance, allowShort);
+      const rollingCovariance = trainingPoints.length >= 13
+        ? covarianceMatrix(logReturns(trainingPoints))
+        : null;
+      const rollingWeights = rollingCovariance
+        ? globalMinimumVarianceWeights(rollingCovariance, allowShort)
+        : symbols.map(() => 1 / symbols.length);
+      if (rollingCovariance) validateMinimumVariance(rollingWeights, rollingCovariance, allowShort);
       const gmvpReturn = rollingWeights.reduce((total, weight, column) => total + weight * assetReturns[column], 0);
       const equalReturn = assetReturns.reduce((total, value) => total + value, 0) / assetReturns.length;
       const spyReturn = monthEnds[i].spy / monthEnds[i - 1].spy - 1;

@@ -226,7 +226,7 @@ export function PortfolioOptimizer() {
             <p className="mt-5 text-center text-xs leading-5 text-mutedTone">
               {panel === 0
                 ? `36 monthly observations through ${new Date(`${result.asOf}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC" })}.`
-                : `${result.observations} monthly returns; GMVP and 1/N are both rebalanced monthly.`}
+                : `${result.observations} monthly returns; both rebalance monthly. GMVP uses a 12-return warm-up, then up to 36 trailing returns.`}
             </p>
           ) : null}
         </div>
