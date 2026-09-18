@@ -1,15 +1,14 @@
 import { z } from "zod";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 const requestSchema = z.object({
   symbols: z
     .string()
     .trim()
     .min(1)
-    .transform((value) =>
-      [...new Set(value.toUpperCase().split(/[\s,]+/).filter(Boolean))]
-    )
+    .transform((value) => [...new Set(value.toUpperCase().split(/[\s,]+/).filter(Boolean))])
     .refine((symbols) => symbols.length >= 2 && symbols.length <= 8, {
       message: "Enter between 2 and 8 symbols."
     })
@@ -17,22 +16,33 @@ const requestSchema = z.object({
       message: "Use valid ticker symbols separated by commas."
     }),
   investment: z.coerce.number().min(100).max(10_000_000),
-  riskProfile: z.enum(["conservative", "balanced", "growth"])
+  method: z.literal("gmvp")
 });
 
 type Bar = { c: number; t: string };
+type MonthEnd = { date: string; prices: number[]; spy: number };
 
-const riskAversion = {
-  conservative: 12,
-  balanced: 5,
-  growth: 1.8
-} as const;
+const PALETTE = ["#8f201e", "#b24b43", "#cf766a", "#7a4b47", "#d7a195", "#622a28", "#b98a80", "#4f3432"];
+
+function covarianceMatrix(returns: number[][]) {
+  const columns = returns[0].length;
+  const means = Array.from({ length: columns }, (_, column) =>
+    returns.reduce((total, row) => total + row[column], 0) / returns.length
+  );
+  return Array.from({ length: columns }, (_, i) =>
+    Array.from({ length: columns }, (__, j) =>
+      returns.reduce(
+        (total, row) => total + (row[i] - means[i]) * (row[j] - means[j]),
+        0
+      ) / (returns.length - 1)
+    )
+  );
+}
 
 function projectToSimplex(values: number[]) {
   const sorted = [...values].sort((a, b) => b - a);
   let sum = 0;
   let threshold = 0;
-
   for (let i = 0; i < sorted.length; i += 1) {
     sum += sorted[i];
     const candidate = (sum - 1) / (i + 1);
@@ -41,26 +51,111 @@ function projectToSimplex(values: number[]) {
       break;
     }
   }
-
   return values.map((value) => Math.max(value - threshold, 0));
 }
 
-function optimizeWeights(means: number[], covariance: number[][], aversion: number) {
-  let weights = means.map(() => 1 / means.length);
+function longOnlyMinimumVariance(covariance: number[][]) {
+  let weights = covariance.map(() => 1 / covariance.length);
+  for (let iteration = 0; iteration < 900; iteration += 1) {
+    const gradient = covariance.map((row) =>
+      2 * row.reduce((total, value, j) => total + value * weights[j], 0)
+    );
+    const step = 0.2 / Math.sqrt(iteration + 1);
+    weights = projectToSimplex(weights.map((weight, i) => weight - step * gradient[i]));
+  }
+  return weights;
+}
 
-  for (let iteration = 0; iteration < 600; iteration += 1) {
-    const gradient = means.map((mean, i) => {
-      const riskContribution = covariance[i].reduce(
-        (total, value, j) => total + value * weights[j],
-        0
-      );
-      return mean - 2 * aversion * riskContribution;
+function workbookMvpWeights(covariance: number[][]) {
+  const rowTotals = covariance.map((row) => row.reduce((total, value) => total + value, 0));
+  const grandTotal = rowTotals.reduce((total, value) => total + value, 0);
+  const weights = rowTotals.map((value) => value / grandTotal);
+
+  // Use the workbook formula whenever it produces pie-compatible allocations.
+  // A long-only variance minimizer protects the UI when unusual assets create negative slices.
+  return Number.isFinite(grandTotal) && Math.abs(grandTotal) > 1e-12 && weights.every((weight) => weight >= 0)
+    ? weights
+    : longOnlyMinimumVariance(covariance);
+}
+
+function portfolioVariance(weights: number[], covariance: number[][]) {
+  return weights.reduce(
+    (total, weight, i) =>
+      total + weight * weights.reduce((rowTotal, otherWeight, j) => rowTotal + otherWeight * covariance[i][j], 0),
+    0
+  );
+}
+
+function logReturns(points: MonthEnd[]) {
+  return points.slice(1).map((point, index) =>
+    point.prices.map((price, column) => Math.log(price / points[index].prices[column]))
+  );
+}
+
+function annualizedRisk(returns: number[]) {
+  const mean = returns.reduce((total, value) => total + value, 0) / returns.length;
+  const monthlyVariance = returns.reduce((total, value) => total + (value - mean) ** 2, 0) / (returns.length - 1);
+  const variance = monthlyVariance * 12;
+  return { sigma: Math.sqrt(Math.max(variance, 0)), variance };
+}
+
+async function fetchBars(symbols: string[], start: string, apiKey: string, apiSecret: string) {
+  const collected = Object.fromEntries(symbols.map((symbol) => [symbol, [] as Bar[]]));
+  let pageToken = "";
+
+  for (let page = 0; page < 5; page += 1) {
+    const params = new URLSearchParams({
+      symbols: symbols.join(","),
+      timeframe: "1Day",
+      start,
+      adjustment: "all",
+      feed: process.env.ALPACA_DATA_FEED || "iex",
+      sort: "asc",
+      limit: "10000"
     });
-    const step = 0.08 / Math.sqrt(iteration + 1);
-    weights = projectToSimplex(weights.map((weight, i) => weight + step * gradient[i]));
+    if (pageToken) params.set("page_token", pageToken);
+
+    const response = await fetch(`https://data.alpaca.markets/v2/stocks/bars?${params}`, {
+      headers: {
+        "APCA-API-KEY-ID": apiKey,
+        "APCA-API-SECRET-KEY": apiSecret
+      },
+      cache: "no-store"
+    });
+    if (!response.ok) throw new Error(response.status === 401 ? "AUTH" : "DATA");
+
+    const payload = (await response.json()) as {
+      bars?: Record<string, Bar[]>;
+      next_page_token?: string | null;
+    };
+    for (const symbol of symbols) collected[symbol].push(...(payload.bars?.[symbol] ?? []));
+    if (!payload.next_page_token) break;
+    pageToken = payload.next_page_token;
   }
 
-  return weights;
+  return collected;
+}
+
+function toMonthEnds(symbols: string[], bars: Record<string, Bar[]>) {
+  const priceMaps = symbols.map(
+    (symbol) => new Map(bars[symbol].map((bar) => [bar.t.slice(0, 10), bar.c]))
+  );
+  const commonDates = [...priceMaps[0].keys()]
+    .filter((date) => priceMaps.every((prices) => prices.has(date)))
+    .sort();
+  const points: MonthEnd[] = [];
+
+  for (const date of commonDates) {
+    const prices = priceMaps.map((map) => map.get(date) ?? 0);
+    const point = { date, prices: prices.slice(0, -1), spy: prices.at(-1) ?? 0 };
+    const month = date.slice(0, 7);
+    if (points.at(-1)?.date.slice(0, 7) === month) points[points.length - 1] = point;
+    else points.push(point);
+  }
+
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  if (points.at(-1)?.date.slice(0, 7) === currentMonth) points.pop();
+  return points;
 }
 
 export async function POST(request: Request) {
@@ -81,102 +176,91 @@ export async function POST(request: Request) {
     );
   }
 
-  const { symbols, investment, riskProfile } = parsed.data;
+  const { symbols, investment } = parsed.data;
+  const requestedSymbols = [...new Set([...symbols, "SPY"])];
   const start = new Date();
-  start.setUTCFullYear(start.getUTCFullYear() - 1);
-  const params = new URLSearchParams({
-    symbols: symbols.join(","),
-    timeframe: "1Day",
-    start: start.toISOString(),
-    adjustment: "all",
-    feed: process.env.ALPACA_DATA_FEED || "iex",
-    limit: "10000"
-  });
+  start.setUTCFullYear(start.getUTCFullYear() - 8);
 
   try {
-    const response = await fetch(`https://data.alpaca.markets/v2/stocks/bars?${params}`, {
-      headers: {
-        "APCA-API-KEY-ID": apiKey,
-        "APCA-API-SECRET-KEY": apiSecret
-      },
-      cache: "no-store"
-    });
-
-    if (!response.ok) {
-      return Response.json(
-        { error: response.status === 401 ? "The Alpaca credentials were rejected." : "Alpaca market data is temporarily unavailable." },
-        { status: 502 }
-      );
-    }
-
-    const payload = (await response.json()) as { bars?: Record<string, Bar[]> };
-    const bars = payload.bars ?? {};
-    const missing = symbols.filter((symbol) => !bars[symbol] || bars[symbol].length < 30);
+    const bars = await fetchBars(requestedSymbols, start.toISOString(), apiKey, apiSecret);
+    const missing = requestedSymbols.filter((symbol) => (bars[symbol]?.length ?? 0) < 1_000);
     if (missing.length) {
       return Response.json(
-        { error: `Not enough market history for: ${missing.join(", ")}. Try other symbols.` },
+        { error: `A five-year backtest needs more history for: ${missing.join(", ")}. Try established symbols.` },
         { status: 422 }
       );
     }
 
-    const returnMaps = symbols.map((symbol) => {
-      const series = bars[symbol];
-      return new Map(
-        series.slice(1).map((bar, index) => [
-          bar.t.slice(0, 10),
-          Math.log(bar.c / series[index].c)
-        ])
-      );
-    });
-    const commonDates = [...returnMaps[0].keys()].filter((date) =>
-      returnMaps.every((returns) => returns.has(date))
-    );
+    // Keep one SPY series at the end for the benchmark while preserving the user's asset order.
+    const alignedSymbols = [...symbols, "SPY"];
+    const alignedBars = Object.fromEntries(alignedSymbols.map((symbol) => [symbol, bars[symbol]]));
+    const monthEnds = toMonthEnds(alignedSymbols, alignedBars);
+    const backtestStart = new Date();
+    backtestStart.setUTCFullYear(backtestStart.getUTCFullYear() - 5);
+    const startIndex = monthEnds.findIndex((point) => point.date >= backtestStart.toISOString().slice(0, 10));
 
-    if (commonDates.length < 30) {
-      return Response.json({ error: "The selected symbols do not share enough trading history." }, { status: 422 });
+    if (startIndex < 37 || monthEnds.length - startIndex < 48) {
+      return Response.json({ error: "The selected symbols do not share enough monthly history for this backtest." }, { status: 422 });
     }
 
-    const matrix = commonDates.map((date) => returnMaps.map((returns) => returns.get(date) ?? 0));
-    const dailyMeans = symbols.map((_, column) =>
-      matrix.reduce((total, row) => total + row[column], 0) / matrix.length
-    );
-    const annualMeans = dailyMeans.map((mean) => mean * 252);
-    const annualCovariance = symbols.map((_, i) =>
-      symbols.map((__, j) => {
-        const covariance = matrix.reduce(
-          (total, row) => total + (row[i] - dailyMeans[i]) * (row[j] - dailyMeans[j]),
-          0
-        ) / (matrix.length - 1);
-        return covariance * 252;
-      })
-    );
-    const weights = optimizeWeights(annualMeans, annualCovariance, riskAversion[riskProfile]);
-    const expectedReturn = weights.reduce((total, weight, i) => total + weight * annualMeans[i], 0);
-    const variance = weights.reduce(
-      (total, weight, i) =>
-        total + weight * weights.reduce((rowTotal, otherWeight, j) => rowTotal + otherWeight * annualCovariance[i][j], 0),
-      0
-    );
+    const latestWindow = monthEnds.slice(-37);
+    const latestCovariance = covarianceMatrix(logReturns(latestWindow));
+    const latestWeights = workbookMvpWeights(latestCovariance);
+    const latestPrices = monthEnds.at(-1)?.prices ?? [];
+    const latestVariance = portfolioVariance(latestWeights, latestCovariance) * 12;
 
     const allocations = symbols.map((symbol, index) => {
-      const latestPrice = bars[symbol].at(-1)?.c ?? 0;
-      const dollars = weights[index] * investment;
+      const dollars = latestWeights[index] * investment;
       return {
         symbol,
-        weight: weights[index],
+        weight: latestWeights[index],
         dollars,
-        shares: latestPrice ? dollars / latestPrice : 0
+        shares: latestPrices[index] ? dollars / latestPrices[index] : 0,
+        color: PALETTE[index % PALETTE.length]
       };
     });
 
+    const series = [{ date: monthEnds[startIndex - 1].date, gmvp: investment, spy: investment, equal: investment }];
+    const realized = { gmvp: [] as number[], spy: [] as number[], equal: [] as number[] };
+    let gmvpValue = investment;
+    let spyValue = investment;
+    let equalValue = investment;
+
+    for (let i = startIndex; i < monthEnds.length; i += 1) {
+      const trainingReturns = logReturns(monthEnds.slice(i - 37, i));
+      const weights = workbookMvpWeights(covarianceMatrix(trainingReturns));
+      const assetReturns = monthEnds[i].prices.map((price, column) => price / monthEnds[i - 1].prices[column] - 1);
+      const gmvpReturn = weights.reduce((total, weight, column) => total + weight * assetReturns[column], 0);
+      const equalReturn = assetReturns.reduce((total, value) => total + value, 0) / assetReturns.length;
+      const spyReturn = monthEnds[i].spy / monthEnds[i - 1].spy - 1;
+
+      gmvpValue *= 1 + gmvpReturn;
+      equalValue *= 1 + equalReturn;
+      spyValue *= 1 + spyReturn;
+      realized.gmvp.push(gmvpReturn);
+      realized.equal.push(equalReturn);
+      realized.spy.push(spyReturn);
+      series.push({ date: monthEnds[i].date, gmvp: gmvpValue, spy: spyValue, equal: equalValue });
+    }
+
     return Response.json({
       allocations,
-      expectedReturn,
-      volatility: Math.sqrt(Math.max(variance, 0)),
-      observations: commonDates.length,
-      asOf: new Date().toISOString()
+      portfolioRisk: { sigma: Math.sqrt(Math.max(latestVariance, 0)), variance: latestVariance },
+      series,
+      riskComparison: {
+        gmvp: annualizedRisk(realized.gmvp),
+        spy: annualizedRisk(realized.spy),
+        equal: annualizedRisk(realized.equal)
+      },
+      observations: series.length - 1,
+      backtestStart: series[0].date,
+      backtestEnd: series.at(-1)?.date,
+      asOf: monthEnds.at(-1)?.date
     });
-  } catch {
-    return Response.json({ error: "The optimizer could not reach live market data. Please try again." }, { status: 502 });
+  } catch (error) {
+    const message = error instanceof Error && error.message === "AUTH"
+      ? "The Alpaca credentials were rejected."
+      : "Alpaca market data is temporarily unavailable.";
+    return Response.json({ error: message }, { status: 502 });
   }
 }
