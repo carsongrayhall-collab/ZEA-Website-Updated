@@ -1,5 +1,7 @@
 .next/
 node_modules/
+*.tsbuildinfo
+test-results/
 .vercel/
 .codex-dev.err
 .codex-dev.log
