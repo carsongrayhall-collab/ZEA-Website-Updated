@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ApiError, authorize, body, Capture, createCapture, entries, failure, Game, read, response, write } from '@/lib/pai-sho';
+import { ApiError, authorize, body, Capture, compactMetadata, createCapture, entries, failure, Game, read, response, write } from '@/lib/pai-sho';
 export const runtime = 'nodejs';
 export async function GET(req: Request) {
   try {
     authorize(req);
     const [games, captures, requests] = await Promise.all([entries<Game>('games/'), entries<Capture>('captures/'), entries<Record<string, unknown>>('requests/')]);
-    return response({ games: games.map(g => g.value), captures: captures.map(c => c.value), requests: requests.map(r => r.value) });
+    return response({ games: games.map(g => ({...g.value,metadata:compactMetadata(g.value.metadata)})), captures: captures.map(c => c.value), requests: requests.map(r => r.value) });
   } catch (error) { return failure(error); }
 }
 const actionSchema = z.discriminatedUnion('action', [

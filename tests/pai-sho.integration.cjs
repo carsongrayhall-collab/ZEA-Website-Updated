@@ -34,7 +34,25 @@ async function admin(action) { const r = await json('/api/pai-sho', { headers, .
     const concurrent = await Promise.all([3, 4].map(sequence => post(path, { events: [{ eventId: randomUUID(), sequence, rawNotation: `Test move ${sequence}` }] })));
     concurrent.forEach(r => assert.equal(r.status, 200, JSON.stringify(r.value)));
     await post('/api/v1/games', { gameId, gameMode: 'skud', ai: 'strategic', outcome: 'host', trainingConsent: false });
+    // Large metadata reproduces the compression/weak ETag failure on subsequent writes.
+    const snapshots = [];
+    for (let index = 0; index < 3; index++) {
+      const snapshotId = randomUUID();
+      cleanup.push(`pai-sho/games/${capture.id}/${snapshotId}.json`);
+      const snapshot = { metadata: { gameId: snapshotId, padding: 'regression '.repeat(600), initialState: { board: Array.from({length:17},()=>Array(17).fill(null)) }, outcome: index === 2 ? 'host' : null }, events: index === 0 ? [] : [{eventId:randomUUID(), sequence:0, actionType:index === 1 ? 'setup' : 'plant'}] };
+      snapshots.push(snapshot);
+      assert.equal((await post('/api/v1/games/snapshot',snapshot)).status,200);
+      assert.equal((await post('/api/v1/games/snapshot',snapshot)).status,200);
+    }
+    const partialId=randomUUID();cleanup.push(`pai-sho/games/${capture.id}/${partialId}.json`);
+    await post('/api/v1/games',{gameId:partialId});
+    assert.equal((await admin()).games.find(g=>g.metadata.gameId===partialId).uploadStatus,'metadata_received');
+    await post('/api/v1/games/snapshot',{metadata:{gameId:partialId},events:[]});
+    assert.equal((await admin()).games.find(g=>g.metadata.gameId===partialId).uploadStatus,'complete');
+    assert.equal((await post('/api/v1/games/snapshot',{metadata:{gameId:randomUUID()},events:[{eventId:'bad',sequence:-1}]})).status,400);
+    assert.equal((await post('/api/v1/games/snapshot',{metadata:{gameId:randomUUID(),padding:'x'.repeat(2000001)},events:[]})).status,413);
     const archive = await admin();
+    for(const snapshot of snapshots){ const stored=archive.games.find(g=>g.metadata.gameId===snapshot.metadata.gameId); assert.deepEqual(stored.events,snapshot.events); assert.equal(stored.metadata.initialState.board.format,'sparse-v1'); assert.equal(stored.metadata.initialState.board.tiles.length,0); }
     const game = archive.games.find(g => g.metadata.gameId === gameId);
     assert.equal(game.events.length, 4); assert.equal(game.metadata.outcome, 'host');
     const { request } = await admin({ action: 'requestAccess', captureId: capture.id, purpose: 'Verify the consent request archive without sending a notification.' });
