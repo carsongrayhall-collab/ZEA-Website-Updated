@@ -43,5 +43,14 @@ function put(path,value){records.set('pai-sho/'+path,value);}
   assert.ok(records.has(`pai-sho/games/${b}/two.json`));
   put('games/invalid/game.json',{updatedAt:'invalid'});
   await assert.rejects(api.purgeExpired(now),/Invalid archive timestamp/);
+  records.delete('pai-sho/games/invalid/game.json');
+  const routeModule={exports:{}}, routeEnv={};
+  const routeCode=ts.transpileModule(fs.readFileSync('src/app/api/pai-sho/retention/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  vm.runInNewContext(routeCode,{exports:routeModule.exports,require:name=>name==='@/lib/pai-sho'?api:require(name),process:{env:routeEnv}});
+  assert.equal((await routeModule.exports.GET(new Request('https://example.com'))).status,503,'missing scheduler configuration must fail closed');
+  routeEnv.CRON_SECRET='test-cron';
+  assert.equal((await routeModule.exports.GET(new Request('https://example.com'))).status,401);
+  assert.equal((await routeModule.exports.GET(new Request('https://example.com',{headers:{Authorization:'Bearer wrong'}}))).status,401);
+  assert.equal((await routeModule.exports.GET(new Request('https://example.com',{headers:{Authorization:'Bearer test-cron'}}))).status,200);
   console.log('Privacy operations: authorization, closed legacy uploads, scoped deletion, failed-delete retry, retention and malformed timestamps passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

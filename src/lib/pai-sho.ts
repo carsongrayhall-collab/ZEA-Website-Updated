@@ -65,15 +65,9 @@ export async function createCapture(label: string, origin: string) {
   await write(`captures/${hash}.json`, capture);
   return { capture, url: `${origin}/pai-sho/sync/${token}` };
 }
-export async function captureFor(token: string) {
-  // Legacy shared capabilities do not prove uploader ownership. Keep writes closed
-  // until the production ownership protocol is implemented and verified.
-  if (token) throw new ApiError(410, 'Legacy archive uploads are closed. Games remain on your device.');
-  if (!/^[a-f0-9]{64}$/.test(token)) throw new ApiError(401, 'Invalid capture link.');
-  const hash = createHash('sha256').update(token).digest('hex');
-  const capture = await read<Capture>(`captures/${hash}.json`);
-  if (!capture || capture.value.revoked || Date.parse(capture.value.expiresAt) <= Date.now()) throw new ApiError(401, 'Capture link expired or revoked. Create a new link in the dashboard.');
-  return capture.value;
+export async function captureFor(_token: string): Promise<Capture> {
+  // Shared legacy capabilities cannot prove ownership. Always fail closed.
+  throw new ApiError(410, 'Legacy archive uploads are closed. Games remain on your device.');
 }
 
 export async function removeRecords(paths: string[]) {
