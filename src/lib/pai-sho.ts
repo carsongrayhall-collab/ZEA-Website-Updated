@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { get, list, put, BlobPreconditionFailedError, BlobServiceRateLimited } from '@vercel/blob';
+import { del, get, list, put, BlobPreconditionFailedError, BlobServiceRateLimited } from '@vercel/blob';
 import { z } from 'zod';
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -65,12 +65,55 @@ export async function createCapture(label: string, origin: string) {
   await write(`captures/${hash}.json`, capture);
   return { capture, url: `${origin}/pai-sho/sync/${token}` };
 }
-export async function captureFor(token: string) {
-  if (!/^[a-f0-9]{64}$/.test(token)) throw new ApiError(401, 'Invalid capture link.');
-  const hash = createHash('sha256').update(token).digest('hex');
-  const capture = await read<Capture>(`captures/${hash}.json`);
-  if (!capture || capture.value.revoked || Date.parse(capture.value.expiresAt) <= Date.now()) throw new ApiError(401, 'Capture link expired or revoked. Create a new link in the dashboard.');
-  return capture.value;
+export async function captureFor(_token: string): Promise<Capture> {
+  // Shared legacy capabilities cannot prove ownership. Always fail closed.
+  throw new ApiError(410, 'Legacy archive uploads are closed. Games remain on your device.');
+}
+
+export async function removeRecords(paths: string[]) {
+  configured();
+  for (let offset = 0; offset < paths.length; offset += 100) {
+    await operation('blob.delete', () => del(paths.slice(offset, offset + 100).map(path => `pai-sho/${path}`), options()));
+  }
+}
+
+// Capture references are lookup keys for administrators, never proof of user ownership.
+// Revoke first; deletion is retryable and success is returned only after all deletes.
+export async function deleteCaptureRecords(captureId: string) {
+  if (!/^[a-f0-9]{64}$/.test(captureId)) throw new ApiError(400, 'Invalid archive reference.');
+  const path = `captures/${captureId}.json`, capture = await read<Capture>(path);
+  if (capture && !capture.value.revoked) await write(path, { ...capture.value, revoked: true }, capture.etag);
+  const [games, requests] = await Promise.all([entries<Game>(`games/${captureId}/`), entries<{captureId: string}>('requests/')]);
+  const paths = [...games.map(row => row.path), ...requests.filter(row => row.value.captureId === captureId).map(row => row.path)];
+  await removeRecords(paths);
+  await removeRecords([path]);
+  return { deleted: paths.length, captureId };
+}
+
+// Run daily at 29 days, allowing a one-day scheduling margin within 30 days.
+// Blob upload time is a conservative legacy fallback; new uploads remain disabled.
+export async function purgeExpired(now = Date.now()) {
+  configured();
+  let deleted = 0;
+  for (const prefix of ['games/', 'requests/', 'captures/']) {
+    let cursor: string | undefined;
+    do {
+      const page = await list({ ...options(), prefix: `pai-sho/${prefix}`, limit: 100, cursor });
+      const paths: string[] = [];
+      for (const blob of page.blobs) {
+        const path = blob.pathname.slice('pai-sho/'.length);
+        const record = await read<Record<string, unknown>>(path);
+        const value = record?.value;
+        const timestamp = value?.firstAcceptedAt || value?.createdAt || value?.updatedAt;
+        const date = typeof timestamp === 'string' ? Date.parse(timestamp) : blob.uploadedAt.getTime();
+        if (!Number.isFinite(date)) throw new ApiError(503, 'Invalid archive timestamp; retention needs administrator review.');
+        if (date <= now - 29 * 86400000) paths.push(path);
+      }
+      await removeRecords(paths); deleted += paths.length;
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+  }
+  return { deleted, checkedAt: new Date(now).toISOString() };
 }
 export function mergeEvents(existing: Event[], incoming: Event[]) {
   const byId = new Map(existing.map(event => [event.eventId, event]));
