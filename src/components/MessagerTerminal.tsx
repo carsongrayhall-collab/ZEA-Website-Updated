@@ -159,7 +159,14 @@ export function MessagerTerminal() {
           recipients: recipientsToSend
         })
       });
-      const data = (await response.json()) as { results?: SendResult[]; error?: string };
+      const responseText = await response.text();
+      if (!response.headers.get("content-type")?.includes("application/json")) {
+        const checkpoint = response.headers.get("x-vercel-mitigated") === "challenge" || responseText.includes("Vercel Security Checkpoint");
+        throw new Error(checkpoint
+          ? "The website security checkpoint blocked this request before sending. Refresh the page, complete any security check, then try again."
+          : `The server returned an unexpected response (HTTP ${response.status}). Delivery is unconfirmed; check Resend before retrying.`);
+      }
+      const data = JSON.parse(responseText) as { results?: SendResult[]; error?: string };
 
       if (!response.ok || !data.results) {
         throw new Error(data.error ?? "Unable to send messages.");
