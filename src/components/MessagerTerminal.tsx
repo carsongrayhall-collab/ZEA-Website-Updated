@@ -52,6 +52,8 @@ function previewHtml(message: string) {
 
 export function MessagerTerminal() {
   const [mode, setMode] = useState<MessagerMode>("single");
+  const [contentFormat, setContentFormat] = useState("text");
+  const [customHtml, setCustomHtml] = useState("");
   const [pin, setPin] = useState("");
   const [fromEmail, setFromEmail] = useState("Carson Hall <carson.hall@zeabroker.com>");
   const [replyTo, setReplyTo] = useState("carson.hall@zeabroker.com");
@@ -72,7 +74,7 @@ export function MessagerTerminal() {
     [recipients, selected]
   );
   const singleCanSend = Boolean(
-    pin.trim() && singleRecipient.email.trim() && singleRecipient.subject.trim() && singleRecipient.message.trim()
+    pin.trim() && singleRecipient.email.trim() && singleRecipient.subject.trim() && (contentFormat === "html" ? customHtml.trim() : singleRecipient.message.trim())
   );
 
   const appendLog = (line: string) => {
@@ -148,6 +150,8 @@ export function MessagerTerminal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pin,
+          contentFormat,
+          customHtml,
           fromEmail,
           replyTo,
           unsubscribeUrl,
@@ -186,7 +190,7 @@ export function MessagerTerminal() {
       return;
     }
 
-    if (!singleRecipient.email.trim() || !singleRecipient.subject.trim() || !singleRecipient.message.trim()) {
+    if (!singleRecipient.email.trim() || !singleRecipient.subject.trim() || !(contentFormat === "html" ? customHtml.trim() : singleRecipient.message.trim())) {
       const message = "Add a recipient email, subject, and message before sending.";
       setStatus(message);
       appendLog(`Error: ${message}`);
@@ -235,12 +239,21 @@ export function MessagerTerminal() {
           <h2 className="font-serif text-[1.9rem] text-burgundy">Control Terminal</h2>
           <p className="font-body text-[0.92rem] leading-6 text-text">
             {mode === "single"
-              ? "Send one protected ZEA email without a spreadsheet. The approved footer is added automatically."
+              ? "Send one protected ZEA email without a spreadsheet. Choose the default message or your own complete HTML email."
               : "Upload an outreach spreadsheet, preview every message, then send selected messages through the ZEA Resend account."}
           </p>
         </div>
 
         <div className="grid gap-3">
+          <label className="block text-sm text-text">Email format
+            <select className="field-base" value={contentFormat} onChange={(event) => setContentFormat(event.target.value)}>
+              <option value="text">Default text and ZEA footer</option>
+              <option value="html">Custom HTML (replaces message and footer)</option>
+            </select>
+          </label>
+          {contentFormat === "html" && <label className="block text-sm text-text">Custom HTML for all selected recipients
+            <textarea className="field-base min-h-[16rem]" value={customHtml} onChange={(event) => setCustomHtml(event.target.value)} placeholder="Paste your complete HTML email here" />
+          </label>}
           <label className="block text-sm text-text">
             <span className="mb-2 block">Terminal PIN</span>
             <input
@@ -408,7 +421,8 @@ export function MessagerTerminal() {
         <iframe
           title="Email preview"
           className="h-[24rem] w-full border border-[rgba(110,31,27,0.18)] bg-white"
-          srcDoc={previewRecipient?.message ? previewHtml(previewRecipient.message) : ""}
+          sandbox=""
+          srcDoc={contentFormat === "html" ? customHtml : previewRecipient?.message ? previewHtml(previewRecipient.message) : ""}
         />
       </section>
 

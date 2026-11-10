@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 
 interface SendPayload {
   pin?: string;
+  contentFormat?: "text" | "html";
+  customHtml?: string;
   fromEmail?: string;
   replyTo?: string;
   unsubscribeUrl?: string;
@@ -37,8 +39,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "RESEND_API_KEY is not configured in Vercel." }, { status: 500 });
     }
 
+    const customHtml = payload.contentFormat === "html" ? payload.customHtml?.trim() : undefined;
+    if (payload.contentFormat === "html" && !customHtml) {
+      return NextResponse.json({ error: "Custom HTML is required." }, { status: 400 });
+    }
     const recipients = (payload.recipients ?? []).filter(
-      (recipient) => recipient.email && recipient.subject && recipient.message
+      (recipient) => recipient.email && recipient.subject && (customHtml || recipient.message)
     );
 
     if (!recipients.length) {
@@ -65,7 +71,7 @@ export async function POST(request: Request) {
         to: recipient.email,
         replyTo,
         subject: recipient.subject,
-        html: messageToHtml(recipient.message),
+        html: customHtml || messageToHtml(recipient.message),
         headers: {
           "List-Unsubscribe": `<${unsubscribeUrl}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
